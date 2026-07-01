@@ -103,3 +103,60 @@ Questions before you start? Email us. Once you open the scaffold, the clock is y
 ---
 
 <!-- ↓↓↓ CANDIDATE: add your "README the client could read" section here ↓↓↓ -->
+## Candidate Notes: Inbox Triage Agent
+
+This project implements a first-pass inbox triage worker for a small B2B company. The agent reads incoming emails from the mock inbox API, classifies each message into one of four categories, proposes the appropriate action, and only performs external writes after explicit human approval.
+
+### What it does
+
+The triage worker classifies each email as one of:
+
+- `billing`
+- `bug_report`
+- `sales_lead`
+- `spam`
+
+Based on that classification, it proposes actions using the routing table:
+
+- Billing emails receive a drafted customer reply.
+- Bug reports create an engineering alert in `#engineering`.
+- Sales leads receive a drafted reply and create a CRM lead.
+- Spam is logged as spam and dropped with no external action.
+
+The most important design point is that proposing an action is separate from executing it. The agent can classify an email and build a proposed action plan, but `execute()` will not call any write endpoint unless the approver explicitly returns `True`.
+
+### How to run it
+
+Start the mock API in one terminal:
+
+```bash
+python -m uvicorn mock_api.server:app --host 127.0.0.1 --port 8099 --reload
+
+In a second terminal, activate the virtual environment and run the approval demo:
+
+source .venv/Scripts/activate
+python run.py
+
+To verify that approved actions created side effects:
+
+curl -s http://127.0.0.1:8099/_audit | python -m json.tool
+
+To verify the human approval gate blocks writes, restart the mock API to clear the audit log, then run:
+
+python run_reject_all.py
+curl -s http://127.0.0.1:8099/_audit | python -m json.tool
+
+The reject-all audit should remain empty:
+
+{
+    "sent_mail": [],
+    "alerts": [],
+    "leads": []
+}
+
+
+Design decision I am proudest of:
+
+The design decision I am proudest of is separating planning from execution. plan_actions() is pure and deterministic: it creates proposed actions but never calls the network. execute() is the only place where write actions can happen, and it returns immediately if approved is false. This makes the human-in-the-loop control easy to test, easy to reason about, and safer than allowing the classifier or planner to directly mutate external systems.
+
+I also kept read and write credentials separate in TriageClient. Reading the inbox uses the read token, while sending mail, creating alerts, and creating CRM leads require the write token. That supports least privilege and makes the spam/no-action path safer because spam classification produces no proposed write actions.
